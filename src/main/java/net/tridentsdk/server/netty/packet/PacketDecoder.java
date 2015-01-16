@@ -1,42 +1,31 @@
 /*
- * Copyright (c) 2014, The TridentSDK Team
- * All rights reserved.
+ * Trident - A Multithreaded Server Alternative
+ * Copyright 2014 The TridentSDK Team
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     1. Redistributions of source code must retain the above copyright
- *        notice, this list of conditions and the following disclaimer.
- *     2. Redistributions in binary form must reproduce the above copyright
- *        notice, this list of conditions and the following disclaimer in the
- *        documentation and/or other materials provided with the distribution.
- *     3. Neither the name of the The TridentSDK Team nor the
- *        names of its contributors may be used to endorse or promote products
- *        derived from this software without specific prior written permission.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL The TridentSDK Team BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 package net.tridentsdk.server.netty.packet;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ReplayingDecoder;
-import net.tridentsdk.api.Trident;
 import net.tridentsdk.server.TridentServer;
+import net.tridentsdk.server.netty.ClientConnection;
 import net.tridentsdk.server.netty.Codec;
-import net.tridentsdk.server.netty.protocol.Protocol;
 
 import java.util.List;
+import java.util.zip.Inflater;
 
 /**
  * Channel handler that decodes the packet data sent from the stream in the form of the byte buffer. This is needed to
@@ -45,46 +34,38 @@ import java.util.List;
  *
  * @author The TridentSDK Team
  */
-public class PacketDecoder extends ReplayingDecoder<PacketDecoder.State> {
-    private final Protocol protocol;
-    private int length;
+public class PacketDecoder extends ReplayingDecoder<Void> {
 
-    /**
-     * Creates the decoder and initializes the state
-     */
-    public PacketDecoder() {
-        super(State.LENGTH);
-        this.protocol = ((TridentServer) Trident.getServer()).getProtocol();
+    private final Inflater inflater = new Inflater();
+    private ClientConnection connection;
+    private int rawLength;
+
+    @Override
+    public void handlerAdded(ChannelHandlerContext context) {
+        this.connection = ClientConnection.getConnection(context);
     }
 
     @Override
     protected void decode(ChannelHandlerContext context, ByteBuf buf, List<Object> objects) throws Exception {
-        // TODO :)
-        int length = Codec.readVarInt32(buf);
+        boolean compressed = connection.isCompressionEnabled();
+        this.rawLength = Codec.readVarInt32(buf);
 
-        this.checkpoint(State.DATA);
+        if(!(compressed) || rawLength < TridentServer.getInstance().getCompressionThreshold()) {
+            ByteBuf data = buf.readBytes(this.rawLength);
 
-        //Gets the packet id from the data
-        int id = Codec.readVarInt32(buf);
-        buf.markReaderIndex();
-        byte[] data = new byte[length];
-        buf.readBytes(data);
+            objects.add(new PacketData(data));
+            return;
+        }
 
-        //Copies the Buf's data to put into a PacketData instance
-        ByteBuf dataCopy = Unpooled.copiedBuffer(data);
+        byte[] compressedData = new byte[buf.readableBytes()];
+        byte[] decompressed = new byte[rawLength];
 
-        //Passes the PacketData instance to be processed downstream
-        objects.add(new PacketData(id, dataCopy));
+        buf.readBytes(compressedData);
+        inflater.setInput(compressedData);
 
-        this.checkpoint(State.LENGTH);
-    }
+        inflater.inflate(decompressed);
+        objects.add(new PacketData(Unpooled.wrappedBuffer(decompressed)));
 
-    /**
-     * The current read state of the decoder
-     *
-     * @author The TridentSDK Team
-     */
-    enum State {
-        LENGTH, DATA
+        inflater.reset();
     }
 }

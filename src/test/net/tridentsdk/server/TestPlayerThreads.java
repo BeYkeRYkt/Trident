@@ -1,34 +1,26 @@
 /*
- * Copyright (c) 2014, The TridentSDK Team
- * All rights reserved.
+ * Trident - A Multithreaded Server Alternative
+ * Copyright 2014 The TridentSDK Team
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     1. Redistributions of source code must retain the above copyright
- *        notice, this list of conditions and the following disclaimer.
- *     2. Redistributions in binary form must reproduce the above copyright
- *        notice, this list of conditions and the following disclaimer in the
- *        documentation and/or other materials provided with the distribution.
- *     3. Neither the name of the The TridentSDK Team nor the
- *        names of its contributors may be used to endorse or promote products
- *        derived from this software without specific prior written permission.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL The TridentSDK Team BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package net.tridentsdk.server;
 
-import net.tridentsdk.server.netty.client.ClientConnection;
-import net.tridentsdk.server.threads.PlayerThreads;
+import net.tridentsdk.entity.living.Player;
+import net.tridentsdk.factory.Factories;
+import net.tridentsdk.server.netty.ClientConnection;
+import net.tridentsdk.server.player.TridentPlayer;
 import net.tridentsdk.server.threads.ThreadsManager;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Mode;
@@ -38,6 +30,7 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /*
@@ -67,7 +60,7 @@ Iteration   3: 7.120 ns/op
 Iteration   4: 7.107 ns/op
 Iteration   5: 7.221 ns/op
 
-Result: 7.113 ±(99.9%) 0.323 ns/op [Average]
+Result: 7.113 �(99.9%) 0.323 ns/op [Average]
   Statistics: (min, avg, max) = (6.986, 7.113, 7.221), stdev = 0.084
   Confidence interval (99.9%): [6.790, 7.436]
 
@@ -98,7 +91,7 @@ Iteration   3: 7.087 ns/op
 Iteration   4: 7.153 ns/op
 Iteration   5: 7.044 ns/op
 
-Result: 7.097 ±(99.9%) 0.301 ns/op [Average]
+Result: 7.097 �(99.9%) 0.301 ns/op [Average]
   Statistics: (min, avg, max) = (7.005, 7.097, 7.196), stdev = 0.078
   Confidence interval (99.9%): [6.796, 7.398]
 
@@ -110,7 +103,8 @@ n.t.s.TestPlayerThreads.autoBox         avgt         5        7.113        0.323
 n.t.s.TestPlayerThreads.explicitBox     avgt         5        7.097        0.301    ns/op
  */
 public class TestPlayerThreads {
-    public static final ClientConnection CLIENT_CONNECTION = ClientConnection.registerConnection(new CTXProper());
+    public static final Player PLAYER = TridentPlayer.spawnPlayer(ClientConnection.registerConnection(
+            new CTXProper().channel()), UUID.randomUUID());
 
     /* @Benchmark public void explicitBox(Blackhole blackhole) {
         blackhole.consume(Integer.valueOf(69));
@@ -135,11 +129,13 @@ public class TestPlayerThreads {
         ThreadsManager.stopAll();
     }
 
-    @Benchmark public void put(Blackhole blackhole) {
-        blackhole.consume(PlayerThreads.clientThreadHandle(TestPlayerThreads.CLIENT_CONNECTION));
+    @Benchmark
+    public void put(Blackhole blackhole) {
+        blackhole.consume(Factories.threads().playerThread(PLAYER));
     }
 
-    @Benchmark public void remove(Blackhole blackhole) {
-        PlayerThreads.remove(TestPlayerThreads.CLIENT_CONNECTION);
+    @Benchmark
+    public void remove(Blackhole blackhole) {
+        //PlayerThreads.remove(TestPlayerThreads.PLAYER);
     }
 }

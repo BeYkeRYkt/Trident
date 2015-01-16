@@ -1,39 +1,48 @@
 /*
- * Copyright (c) 2014, The TridentSDK Team
- * All rights reserved.
+ * Trident - A Multithreaded Server Alternative
+ * Copyright 2014 The TridentSDK Team
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     1. Redistributions of source code must retain the above copyright
- *        notice, this list of conditions and the following disclaimer.
- *     2. Redistributions in binary form must reproduce the above copyright
- *        notice, this list of conditions and the following disclaimer in the
- *        documentation and/or other materials provided with the distribution.
- *     3. Neither the name of the The TridentSDK Team nor the
- *        names of its contributors may be used to endorse or promote products
- *        derived from this software without specific prior written permission.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL The TridentSDK Team BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 package net.tridentsdk.server;
 
-import net.tridentsdk.api.Server;
-import net.tridentsdk.api.Trident;
+import net.tridentsdk.*;
+import net.tridentsdk.config.JsonConfig;
+import net.tridentsdk.entity.living.Player;
+import net.tridentsdk.event.EventHandler;
+import net.tridentsdk.plugin.TridentPluginHandler;
+import net.tridentsdk.server.entity.EntityManager;
 import net.tridentsdk.server.netty.protocol.Protocol;
+import net.tridentsdk.server.packets.play.out.PacketPlayOutPluginMessage;
+import net.tridentsdk.server.player.OfflinePlayer;
+import net.tridentsdk.server.player.TridentPlayer;
+import net.tridentsdk.server.threads.ConcurrentTaskExecutor;
+import net.tridentsdk.server.threads.MainThread;
+import net.tridentsdk.server.threads.ThreadsManager;
+import net.tridentsdk.server.window.WindowManager;
+import net.tridentsdk.server.world.RegionFileCache;
+import net.tridentsdk.server.world.TridentWorld;
+import net.tridentsdk.server.world.TridentWorldLoader;
+import net.tridentsdk.util.TridentLogger;
+import net.tridentsdk.window.Window;
+import net.tridentsdk.world.World;
+import org.slf4j.Logger;
 
 import javax.annotation.concurrent.ThreadSafe;
-import java.util.concurrent.LinkedTransferQueue;
-import java.util.concurrent.TransferQueue;
+import java.net.InetAddress;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -42,35 +51,67 @@ import java.util.concurrent.atomic.AtomicReference;
  * @author The TridentSDK Team
  */
 @ThreadSafe
-public final class TridentServer implements Server, Runnable {
-    private final AtomicReference<Thread> SERVER_THREAD = new AtomicReference<>();
-    //private final ProfileRepository PROFILE_REPOSITORY = new HttpProfileRepository("minecraft");
+public final class TridentServer implements Server {
+    private static final AtomicReference<Thread> SERVER_THREAD = new AtomicReference<>();
+    public static final TridentWorld WORLD = (TridentWorld) new TridentWorldLoader().load("world");
+    private static final DisplayInfo INFO = new DisplayInfo();
 
-    private final TridentConfig config;
+    private final MainThread mainThread;
+
+    private final JsonConfig config;
     private final Protocol protocol;
-    private final TransferQueue<Runnable> threadTasks = new LinkedTransferQueue<>();
+    private final Logger logger;
 
-    private boolean stopped;
+    private final ConcurrentTaskExecutor<?> taskExecutor;
+    private final RegionFileCache regionCache;
 
-    private TridentServer(TridentConfig config) {
+    private final EntityManager entityManager;
+    private final WindowManager windowManager;
+    private final EventHandler eventManager;
+
+    private final TridentPluginHandler pluginHandler;
+    private final TridentScheduler scheduler;
+
+    private final TridentWorldLoader worldLoader;
+
+    private TridentServer(JsonConfig config, ConcurrentTaskExecutor<?> taskExecutor, Logger logger) {
         this.config = config;
         this.protocol = new Protocol();
+        this.taskExecutor = taskExecutor;
+        this.entityManager = new EntityManager();
+        this.regionCache = new RegionFileCache();
+        this.windowManager = new WindowManager();
+        this.eventManager = new EventHandler();
+        this.pluginHandler = new TridentPluginHandler();
+        this.scheduler = new TridentScheduler();
+        this.logger = logger;
+        this.mainThread = new MainThread(20);
+        worldLoader = new TridentWorldLoader();
     }
 
     /**
      * Creates the server access base, distributing information to the fields available
      *
      * @param config the configuration to use for option lookup
+     * @param logger the server logger
      */
-    public static TridentServer createServer(TridentConfig config) {
-        TridentServer server = new TridentServer(config);
+    public static TridentServer createServer(JsonConfig config, ConcurrentTaskExecutor<?> taskExecutor, Logger logger) {
+        TridentServer server = new TridentServer(config, taskExecutor, logger);
         Trident.setServer(server);
 
-        server.SERVER_THREAD.set(new Thread(server, "TridentServer Main Thread"));
-        server.SERVER_THREAD.get().start();
+        SERVER_THREAD.set(server.taskExecutor.scaledThread().asThread());
 
         return server;
         // We CANNOT let the "this" instance escape during creation, else we lose thread-safety
+    }
+
+    /**
+     * Gets the instance of the server
+     *
+     * @return the server singleton
+     */
+    public static TridentServer getInstance() {
+        return (TridentServer) Trident.getServer();
     }
 
     /**
@@ -82,10 +123,17 @@ public final class TridentServer implements Server, Runnable {
         return this.protocol;
     }
 
-    /*
-    public ProfileRepository getProfileRepository() {
-        return this.PROFILE_REPOSITORY;
-    } */
+    public EntityManager getEntityManager() {
+        return this.entityManager;
+    }
+
+    public RegionFileCache getRegionFileCache() {
+        return this.regionCache;
+    }
+
+    public int getCompressionThreshold() {
+        return this.config.getInt("compression-threshold", Defaults.COMPRESSION_THRESHHOLD);
+    }
 
     /**
      * Gets the port the server currently runs on
@@ -94,31 +142,20 @@ public final class TridentServer implements Server, Runnable {
      */
     @Override
     public int getPort() {
-        return (int) this.config.getPort();
+        return this.config.getInt("port", 25565);
     }
 
     /**
      * Puts a task into the execution queue
      */
+    @Override
     public void addTask(Runnable task) {
-        this.threadTasks.add(task);
+        this.taskExecutor.scaledThread().addTask(task);
     }
 
     @Override
-    public void run() {
-        //TODO: Set some server stuff up
-
-        //TODO: Main server Loop
-        while (!this.stopped) {
-            try {
-                // task cannot be null because it will block until there is an
-                // element in the linked queue
-                Runnable task = this.threadTasks.take();
-                task.run();
-            } catch (InterruptedException ignored) {
-            }
-            this.run();
-        }
+    public JsonConfig getConfig() {
+        return this.config;
     }
 
     /**
@@ -127,15 +164,87 @@ public final class TridentServer implements Server, Runnable {
     @Override
     public void shutdown() {
         //TODO: Cleanup stuff...
-        this.SERVER_THREAD.get().interrupt();
-        try {
-            this.threadTasks.transfer(new Runnable() {
-                @Override public void run() {
-                    TridentServer.this.stopped = true;
-                }
-            });
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+        TridentLogger.log("Shutting down server connections...");
+        TridentStart.close();
+        TridentLogger.log("Shutting down worker threads...");
+        this.taskExecutor.shutdown();
+        this.scheduler.stop();
+        TridentLogger.log("Shutting down server process...");
+        ThreadsManager.stopAll();
+        TridentLogger.log("Server shutdown successfully.");
+
+        System.exit(0);
+    }
+
+    @Override
+    public Set<World> getWorlds() {
+        Set<World> worlds = new LinkedHashSet<>();
+        worlds.addAll(worldLoader.getWorlds());
+
+        return worlds;
+    }
+
+    @Override
+    public InetAddress getServerIp() {
+        return null;
+    }
+
+    @Override
+    public String getVersion() {
+        // TODO: Make this more eloquent
+        return "1.0-SNAPSHOT";
+    }
+
+    @Override
+    public Difficulty getDifficulty() {
+        byte difficulty = this.getConfig().getByte("difficulty", Defaults.DIFFICULTY.toByte());
+        switch (difficulty) {
+            case 0:
+                return Difficulty.PEACEFUL;
+            case 1:
+                return Difficulty.EASY;
+            case 2:
+                return Difficulty.NORMAL;
+            case 3:
+                return Difficulty.HARD;
         }
+        return null;
+    }
+
+    @Override
+    public Window getWindow(int id) {
+        return this.windowManager.getWindow(id);
+    }
+
+    @Override
+    public EventHandler getEventManager() {
+        return this.eventManager;
+    }
+
+    @Override
+    public void sendPluginMessage(String channel, byte... data) {
+        TridentPlayer.sendAll(new PacketPlayOutPluginMessage()
+                        .set("channel", channel)
+                        .set("data", data));
+    }
+
+    @Override
+    public TridentPluginHandler getPluginHandler() {
+        return this.pluginHandler;
+    }
+
+    @Override
+    public DisplayInfo getInfo() {
+        return INFO;
+    }
+
+    @Override
+    public Player getPlayer(UUID id) {
+        Player p;
+        if ((p = TridentPlayer.getPlayer(id)) != null) {
+            return p;
+        }
+
+        return OfflinePlayer.getOfflinePlayer(id);
     }
 }

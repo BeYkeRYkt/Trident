@@ -1,41 +1,33 @@
 /*
- * Copyright (c) 2014, The TridentSDK Team
- * All rights reserved.
+ * Trident - A Multithreaded Server Alternative
+ * Copyright 2014 The TridentSDK Team
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     1. Redistributions of source code must retain the above copyright
- *        notice, this list of conditions and the following disclaimer.
- *     2. Redistributions in binary form must reproduce the above copyright
- *        notice, this list of conditions and the following disclaimer in the
- *        documentation and/or other materials provided with the distribution.
- *     3. Neither the name of the The TridentSDK Team nor the
- *        names of its contributors may be used to endorse or promote products
- *        derived from this software without specific prior written permission.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL The TridentSDK Team BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
-
 package net.tridentsdk.server.netty.protocol;
 
-import net.tridentsdk.server.netty.packet.*;
+import net.tridentsdk.perf.FastClass;
+import net.tridentsdk.server.netty.packet.Packet;
+import net.tridentsdk.server.netty.packet.PacketType;
+import net.tridentsdk.server.netty.packet.UnknownPacket;
+import net.tridentsdk.util.TridentLogger;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.Map;
 
 abstract class PacketManager {
-    final Map<Integer, Class<?>> inPackets = new HashMap<>();
-    final Map<Integer, Class<?>> outPackets = new HashMap<>();
+    protected final Map<Integer, Class<? extends Packet>> inPackets = new HashMap<>();
+    protected final Map<Integer, Class<? extends Packet>> outPackets = new HashMap<>();
 
     PacketManager() {
         this.inPackets.put(-1, UnknownPacket.class);
@@ -44,7 +36,7 @@ abstract class PacketManager {
 
     public Packet getPacket(int id, PacketType type) {
         try {
-            Map<Integer, Class<?>> applicableMap;
+            Map<Integer, Class<? extends Packet>> applicableMap;
 
             switch (type) {
                 case IN:
@@ -64,10 +56,12 @@ abstract class PacketManager {
             if (cls == null)
                 cls = applicableMap.get(-1);
 
-            return cls.asSubclass(Packet.class).getConstructor().newInstance();
-        } catch (IllegalAccessException | InstantiationException |
-                NoSuchMethodException | InvocationTargetException ex) {
-            throw new RuntimeException(ex.getMessage());
+            FastClass fastClass = FastClass.get(cls);
+
+            return fastClass.getConstructor().newInstance();
+        } catch (Exception ex) {
+            TridentLogger.error(new RuntimeException(ex.getMessage()));
+            return null;
         }
     }
 }
